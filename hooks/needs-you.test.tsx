@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { parseAsks } from './parse'
@@ -11,11 +11,13 @@ const BAND = {
     hasSurvey: false,
     isWorking: false,
     maxRows: 20,
-    bodyColumns: 100,
+    bodyColumns: 120,
     scroll: { offset: 0, bodyRows: 20 },
     view: {},
   },
 } as const
+
+const NARROW = { ...BAND, props: { ...BAND.props, bodyColumns: 70 } } as const
 
 const turn = (answer: string, extra: { agentId?: string } = {}) => ({
   answer,
@@ -37,40 +39,37 @@ const ASKING = `Deployed the branch.
    - Which region? → us-east / us-west
    - Keep the old DNS
      record? → Yes / No
-4. Untagged, so a do.
 
 I'll keep going on the docs meanwhile.`
 
 /**
- * The engine beneath the plugin: a prompt box, the status line, and the
- * question dialog answering from `picks` (null: the person dismissed it).
+ * The engine beneath the plugin: its own band, the question dialog answering
+ * from `picks` (null: dismissed), and the prompts the plugin submits.
  */
 const engine = (on: On, picks: (string | null)[]) => {
   const sent: { text: string; origin: string }[] = []
-  const asked: { question: string; options: string[] }[] = []
-  const statuses: (string | undefined)[] = []
+  const asked: string[] = []
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text key="engine">engine</Text>
   })
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  on('ui.status', (_, e) => {
-    statuses.push(e.text)
-    return { value: undefined }
-  })
   on('prompt.submit', (_, e) => {
     sent.push({ text: e.text, origin: e.origin.kind })
     return { text: e.text }
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
     const q = e.questions[0]!
-    asked.push({ question: q.question, options: q.options?.map(o => o.label) ?? [] })
+    asked.push(q.question)
     const pick = picks.shift()
     if (pick == null) return { deny: 'dismissed' }
     return { result: { questions: e.questions, answers: { [q.question]: pick } } } as never
   })
-  return { sent, asked, statuses }
+  return { sent, asked, clock: mock.clock(on) }
 }
+
+const textOf = async (ui: { findAll: (q: object) => Promise<{ text?: string }[]> }) =>
+  (await ui.findAll({ type: 'Box' }))[0]?.text ?? ''
 
 describe('parseAsks', () => {
   test('reads kinds, options and questions', async () => {
@@ -91,15 +90,15 @@ describe('parseAsks', () => {
             { text: 'Keep the old DNS record?', options: ['Yes', 'No'] },
           ],
         },
-        { kind: 'do', text: 'Untagged, so a do.', questions: [] },
       ],
     })
   })
 
-  test('old decide/answer tags read as ask; nothing and missing', async () => {
+  test('old tags read as ask; nothing says finished or still going; missing', async () => {
     const old = parseAsks('**What I need from you**\n1. [decide] What port?\n2. [answer] Who owns it?')
     expect(old.kind === 'asks' && old.asks.map(a => a.kind)).toEqual(['ask', 'ask'])
-    expect(parseAsks('All done. Nothing needed from you right now — finished.')).toEqual({ kind: 'nothing' })
+    expect(parseAsks('Nothing needed from you right now. Finished.')).toEqual({ kind: 'nothing', isGoing: false })
+    expect(parseAsks('Nothing needed from you right now; still going on the tests.')).toEqual({ kind: 'nothing', isGoing: true })
     expect(parseAsks('Here is a long update with no section.')).toEqual({ kind: 'missing' })
   })
 })
@@ -117,27 +116,55 @@ test("the rule rides the system prompt, not a teammate's", async ($, on) => {
   expect((await $.prompt.compose({ ...args, traits: ['teammate'] })).sections.map(s => s.id)).toEqual(['intro'])
 })
 
-test('answers are held, then sent as one message once the last is in', async ($, on) => {
-  const { sent, asked, statuses } = engine(on, ['Merge now (recommended)', null, 'us-east', 'Yes'])
+test('arrive: rows drop in 40 ms apart, then rest with counts and the meter', async ($, on) => {
+  const { clock } = engine(on, [])
   await $.turn.complete(turn(ASKING))
   const ui = await $.ui.mount(BAND)
-  expect((await ui.find({ key: 'title' }))?.text).toContain('Needs you (4)')
+  expect(await ui.find({ key: 'ask-0' })).toBeUndefined()
+  await clock.advance(40)
+  expect(await ui.find({ key: 'ask-0' })).toBeDefined()
+  expect(await ui.find({ key: 'ask-1' })).toBeUndefined()
+  await clock.advance(80)
+  expect(await ui.find({ key: 'ask-2' })).toBeDefined()
+  await clock.advance(40)
+  const band = await textOf(ui)
+  expect(band).toContain('needs you 3 open')
+  expect(band).toContain('2 options')
+  expect(band).toContain('2 questions')
+  expect(band).toContain('□□□  press 1–3 · answers send together')
   const hotkeys = (await ui.findAll({ type: 'Button' })).map(b => (b.props as { hotkey?: string }).hotkey)
-  expect(hotkeys).toEqual(['h', '1', '2', '3', '4'])
+  expect(hotkeys).toEqual(['h', '1', '2', '3'])
+  await ui.unmount()
+})
+
+test('press: flash, land green, settle; ask reads back; the last answer sends and folds', async ($, on) => {
+  const { sent, asked, clock } = engine(on, ['Merge now (recommended)', null, 'us-east', 'Yes'])
+  await $.turn.complete(turn(ASKING))
+  await clock.advance(200)
+  const ui = await $.ui.mount(BAND)
 
   await ui.press({ key: 'act-0' })
-  expect((await ui.find({ key: 'title' }))?.text).toContain('Needs you (3) · answers send when the last is in')
+  expect((await ui.findAll({ type: 'Text' })).some(t => (t.props as { inverse?: boolean }).inverse === true)).toBe(true)
+  await clock.advance(100)
+  expect(await textOf(ui)).toContain('✓ 1: do  Run')
+  expect(await textOf(ui)).toContain('■□□  1 answer held · sends to Claude when the last is in')
+  await clock.advance(600)
 
   await ui.press({ key: 'act-1' })
-  expect(asked[0]).toEqual({ question: 'Merge #12 now, or wait for CI?', options: ['Merge now (recommended)', 'Wait for CI'] })
+  await clock.advance(100)
+  expect(asked).toEqual(['Merge #12 now, or wait for CI?'])
+  expect(await textOf(ui)).toContain('→ Merge now')
 
-  // Dismissed on its first question: the ask stays open.
+  // Dismissed: ↺ and a hint for 2 s, then open again.
   await ui.press({ key: 'act-2' })
-  expect((await ui.find({ key: 'title' }))?.text).toContain('Needs you (2)')
-  await ui.press({ key: 'act-2' })
-  await ui.press({ key: 'act-3' })
+  await clock.advance(100)
+  expect(await textOf(ui)).toContain('press 3 again')
+  await clock.advance(2000)
+  expect(await textOf(ui)).toContain('2 questions')
 
-  expect(asked.map(a => a.question)).toEqual(['Merge #12 now, or wait for CI?', 'Which region?', 'Which region?', 'Keep the old DNS record?'])
+  await ui.press({ key: 'act-2' })
+  await clock.advance(100)
+  expect(await textOf(ui)).toContain('sending 3 answers')
   expect(sent).toEqual([
     {
       origin: 'plugin',
@@ -147,28 +174,44 @@ test('answers are held, then sent as one message once the last is in', async ($,
         '3. Two things about the deploy:',
         '   - Which region? → us-east',
         '   - Keep the old DNS record? → Yes',
-        '4. Untagged, so a do. → done',
       ].join('\n'),
     },
   ])
-  expect(await ui.find({ key: 'title' })).toBeUndefined()
 
-  // A turn that skips the rule keeps the list; one with nothing needed clears it.
-  await $.turn.complete(turn('**What I need from you**\n1. [do] Again'))
-  await $.turn.complete(turn('Still working, here is progress.'))
-  await $.turn.complete(turn('**What I need from you**\n1. Ignore me', { agentId: 'sub' }))
-  expect(statuses.at(-1)).toContain('no "What I need from you"')
-  expect((await ui.find({ key: 'title' }))?.text).toContain('Needs you (1)')
-  await $.turn.complete(turn('Finished. Nothing needed from you right now.'))
-  expect(await ui.find({ key: 'title' })).toBeUndefined()
+  await clock.advance(500 + 30 * 4)
+  expect(await textOf(ui)).toContain('✓ 3 answers sent to Claude')
+  await clock.advance(2500)
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
   await ui.unmount()
 })
 
-test('a message of your own carries the answers held so far', async ($, on) => {
-  const { sent } = engine(on, [])
+test('edges: nothing needed, a reply with no list, a narrow terminal', async ($, on) => {
+  const { clock } = engine(on, [])
+  await $.turn.complete(turn('Finished. Nothing needed from you right now.'))
+  const ui = await $.ui.mount(BAND)
+  expect(await textOf(ui)).toBe('✓ nothing needed from you · finished')
+  await clock.advance(4000)
+  expect(await ui.find({ type: 'Text', text: 'engine' })).toBeDefined()
+
+  await $.turn.complete(turn(ASKING))
+  await clock.advance(200)
+  await $.turn.complete(turn('Still working, here is progress.'))
+  await $.turn.complete(turn('**What I need from you**\n1. Ignore me', { agentId: 'sub' }))
+  expect(await textOf(ui)).toContain('needs you 3 open · from an earlier reply')
+  await ui.unmount()
+
+  const narrow = await $.ui.mount(NARROW)
+  expect(await textOf(narrow)).not.toContain('2 options')
+  await narrow.unmount()
+})
+
+test('a message of your own carries the answers held so far, once', async ($, on) => {
+  const { sent, clock } = engine(on, [])
   await $.turn.complete(turn('**What I need from you**\n1. [do] Flip the switch\n2. [do] Restart it'))
+  await clock.advance(200)
   const ui = await $.ui.mount(BAND)
   await ui.press({ key: 'act-0' })
+  await clock.advance(100)
   await $.prompt.submit({ text: 'also, rename it', origin: { kind: 'composer' } } as never)
   expect(sent.at(-1)?.text).toBe('1. Flip the switch → done\n\nalso, rename it')
   await $.prompt.submit({ text: 'and again', origin: { kind: 'composer' } } as never)

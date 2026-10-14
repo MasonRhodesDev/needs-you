@@ -1,10 +1,11 @@
 import type { AskKind, Question } from '../types'
 
 export type ParsedAsk = { kind: AskKind; text: string; questions: Question[] }
-export type Parsed = { kind: 'asks'; asks: ParsedAsk[] } | { kind: 'nothing' } | { kind: 'missing' }
+export type Parsed = { kind: 'asks'; asks: ParsedAsk[] } | { kind: 'nothing'; isGoing: boolean } | { kind: 'missing' }
 
 const HEADING = /what i need from you/i
 const NOTHING = /nothing needed from you/i
+const GOING = /still (?:going|working|running)|in progress|not (?:yet )?finished/i
 const ITEM = /^\s*(\d+)[.)]\s+(.*)$/
 // decide and answer were this mod's first split of ask; still read as ask.
 const TAG = /^\s*(?:\*\*)?\[(do|ask|decide|answer)\](?:\*\*)?\s*/i
@@ -77,5 +78,5 @@ export const parseAsks = (answer: string): Parsed => {
     if (asks.length > 0) return { kind: 'asks', asks }
   }
 
-  return NOTHING.test(answer) ? { kind: 'nothing' } : { kind: 'missing' }
+  return NOTHING.test(answer) ? { kind: 'nothing', isGoing: GOING.test(answer) } : { kind: 'missing' }
 }
