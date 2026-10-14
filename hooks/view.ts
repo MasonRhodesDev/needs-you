@@ -80,7 +80,8 @@ export const rowsOf = (asks: Ask[], band: Band): RowView[] => {
       meta: detailOf(ask),
       metaColor: 'inactive',
       isInverse: false,
-      isPressable: !isAnswered(ask) && ask.status !== 'asking',
+      // A flashing row is drawn as inverse Text for its beat; a Button carries no styles at rest.
+      isPressable: !isAnswered(ask) && ask.status !== 'asking' && ask.status !== 'flash',
     }
     if (ask.id < 9 && row.isPressable) row.hotkey = `${ask.id + 1}`
 

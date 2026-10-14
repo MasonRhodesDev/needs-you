@@ -259,10 +259,15 @@ export const register: Register = on => {
             <Box key={`ask-${r.id}`}>
               <Text color={r.markColor}>{r.mark} </Text>
               {r.isPressable && ask ? (
-                <Button key={`act-${r.id}`} label={`${r.id + 1} ${r.kind.trim()} ${r.text}`} plain onPress={() => press($, ask)} {...(r.hotkey ? { hotkey: r.hotkey } : {})}>
-                  {r.hotkey ? '' : r.number}
-                  {body}
-                </Button>
+                // A Button is a leaf: its label is its only text. A hotkey row
+                // draws its own `1: `; past 9 the number rides in the label.
+                <Button
+                  key={`act-${r.id}`}
+                  label={`${r.hotkey ? '' : r.number}${r.kind} ${r.text}`}
+                  plain
+                  onPress={() => press($, ask)}
+                  {...(r.hotkey ? { hotkey: r.hotkey } : {})}
+                />
               ) : (
                 <Text>
                   <Text color="subtle">{r.number}</Text>
