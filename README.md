@@ -24,8 +24,6 @@ From a shell:
 claude plugin install needs-you --marketplace MasonRhodesDev/needs-you
 ```
 
-The repository is private: installing needs read access and a git credential for github.com (an SSH key, or `gh auth login` then `gh auth setup-git`).
-
 ## Develop
 
 ```
