@@ -1,0 +1,6 @@
+{
+  "name": "needs-you-local",
+  "owner": { "name": "Mason Rhodes" },
+  "description": "needs-you: Claude ends every turn with a typed 'What I need from you' list you answer from a band above the prompt",
+  "plugins": [{ "name": "needs-you", "source": "./" }]
+}

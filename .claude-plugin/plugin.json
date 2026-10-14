@@ -1,0 +1,9 @@
+{
+  "name": "needs-you",
+  "version": "0.1.0",
+  "description": "Claude ends every turn with a typed 'What I need from you' list; answer it from a band above the prompt and the answers send themselves",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Mason Rhodes"
+  }
+}
