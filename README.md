@@ -1,5 +1,7 @@
 # needs-you
 
+> **Deprecated.** needs-you is no longer maintained and has been removed from the [mrhodes catalog](https://github.com/MasonRhodesDev/claude-plugins). Existing installs keep working, but they get no updates. To remove it, run `/plugin uninstall needs-you@mrhodes`.
+
 A Claude Code plugin. Every reply ends with a numbered list of what Claude needs from you, and a band above the prompt turns that list into keys you press.
 
 ![needs-you: a reply's list becomes a band; 1 marks a task done, 2 and 3 open Claude Code's question dialog, and the answers go back to Claude as one message](docs/media/flow.webp)
